@@ -68,13 +68,19 @@ mod tests {
 
     #[test]
     fn connect_server() {
-	use openssl::ssl::{SslMethod, SslConnectorBuilder, SSL_VERIFY_NONE};
+	use openssl::hash::MessageDigest;
+	use openssl::ssl::{SslMethod, SslConnectorBuilder, SSL_VERIFY_PEER};
 	use std::io::{Read, Write};
 
         let server = Server::builder().build();
 
 	let mut connector = SslConnectorBuilder::new(SslMethod::tls()).unwrap();
-        connector.set_verify(SSL_VERIFY_NONE);
+        connector.set_verify_callback(SSL_VERIFY_PEER,
+                                      move |_preverified, context| {
+            let fingerprint = context.current_cert().unwrap().fingerprint(MessageDigest::sha256()).unwrap();
+            println!("{:?}", fingerprint);
+            return fingerprint == [71, 18, 185, 57, 251, 203, 66, 166, 181, 16, 27, 66, 19, 154, 37, 177, 79, 129, 180, 24, 250, 202, 189, 55, 135, 70, 241, 47, 133, 204, 101, 68];
+        });
         let connector = connector.build();
 
 	let mut stream = connector.danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(server.connect_tcp()).unwrap();
