@@ -1,18 +1,18 @@
 extern crate openssl;
 
+mod test_util;
+
 #[cfg(test)]
 mod tests {
-
-    use std::io::Write;
-    use std::net::{SocketAddr, TcpListener, TcpStream};
+    use std::io::{Read, Write};
     use std::thread::{self, JoinHandle};
 
     use openssl::ssl::{Ssl, SslContext, SslContextBuilder, SslMethod};
     use openssl::x509;
+    use test_util::tests::Channel;
 
     pub struct Server {
-	    handle: Option<JoinHandle<()>>,
-	    addr: SocketAddr,
+	handle: Option<JoinHandle<()>>,
     }
 
     impl Drop for Server {
@@ -24,57 +24,57 @@ mod tests {
     }
 
     impl Server {
-	pub fn builder() -> Builder {
-	    let mut ctx = SslContext::builder(SslMethod::tls()).unwrap();
+	fn builder(channel: Channel) -> Builder {
+	    let mut ctx = SslContext::builder(SslMethod::dtls()).unwrap();
 	    ctx.set_certificate_chain_file("test/cert.pem").unwrap();
 	    ctx.set_private_key_file("test/key.pem", x509::X509_FILETYPE_PEM)
 		.unwrap();
 
 	    Builder {
 		ctx,
+                channel,
 	    }
-	}
-
-	pub fn connect_tcp(&self) -> TcpStream {
-	    TcpStream::connect(self.addr).unwrap()
 	}
     }
 
     pub struct Builder {
 	ctx: SslContextBuilder,
+        channel: Channel,
     }
 
     impl Builder {
+
 	pub fn build(self) -> Server {
 	    let ctx = self.ctx.build();
-	    let socket = TcpListener::bind("127.0.0.1:0").unwrap();
-	    let addr = socket.local_addr().unwrap();
+            let channel = self.channel;
 
             let thread = thread::Builder::new().name(String::from("server"));
 	    let handle = thread.spawn(move || {
-		    let socket = socket.accept().unwrap().0;
 		    let ssl = Ssl::new(&ctx).unwrap();
-		    let r = ssl.accept(socket);
-                    let mut socket = r.unwrap();
-                    socket.write_all(&[0]).unwrap();
+		    println!("Server is waiting for a SSL connection");
+		    let r = ssl.accept(channel);
+		    println!("Accept call result: {:?}", r.as_ref().err());
+		    let mut socket = r.unwrap();
+		    socket.write_all(b"Test message").unwrap();
+		    println!("Server finished.");
 	    }).unwrap();
 
 	    Server {
 		handle: Some(handle),
-		addr,
 	    }
 	}
     }
 
     #[test]
-    fn connect_server() {
+    fn verify_fingerprint() {
 	use openssl::hash::MessageDigest;
 	use openssl::ssl::{SslMethod, SslConnectorBuilder, SSL_VERIFY_PEER};
-	use std::io::{Read, Write};
 
-        let server = Server::builder().build();
+        let (server_channel, client_channel) = Channel::create_pair(0);
 
-	let mut connector = SslConnectorBuilder::new(SslMethod::tls()).unwrap();
+        let _server = Server::builder(server_channel).build();
+
+	let mut connector = SslConnectorBuilder::new(SslMethod::dtls()).unwrap();
         connector.set_verify_callback(SSL_VERIFY_PEER,
                                       move |_preverified, context| {
             let fingerprint = context.current_cert().unwrap().fingerprint(MessageDigest::sha256()).unwrap();
@@ -83,10 +83,11 @@ mod tests {
         });
         let connector = connector.build();
 
-	let mut stream = connector.danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(server.connect_tcp()).unwrap();
-	stream.write_all(b"GET / HTTP/1.0\r\n\r\n").unwrap();
+	let stream = connector.danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(client_channel);
+        println!("Connection result: {:?}", stream.as_ref().err());
+        let mut stream = stream.unwrap();
 	let mut res = vec![];
 	stream.read_to_end(&mut res).unwrap();
-	println!("{}", String::from_utf8_lossy(&res));
+	println!("Client received: {}", String::from_utf8_lossy(&res));
     }
 }
