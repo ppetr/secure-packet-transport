@@ -4,11 +4,36 @@ mod test_util;
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Read, Write};
+    use std::io::{Error, ErrorKind, Read, Write};
     use std::thread::{self, JoinHandle};
 
-    use openssl::ssl::{Ssl, SslContext, SslContextBuilder, SslFiletype, SslMethod};
+    use openssl::ssl::{ShutdownResult, Ssl, SslContext, SslContextBuilder, SslFiletype, SslMethod, SslStream};
     use test_util::tests::Channel;
+
+    // Checks the SSL error, and if it is ZERO_RETURN (which means the connection has been closed
+    // already), returns ShutdownResult::Received.
+    // Wraps any SSL error into an io::Error.
+    fn allow_zero_return(result: Result<ShutdownResult, openssl::ssl::Error>) -> Result<ShutdownResult, Error> {
+        match result {
+            Err(e) if e.code() == openssl::ssl::ErrorCode::ZERO_RETURN =>
+                Ok(ShutdownResult::Received),
+            Err(e) => Err(Error::new(ErrorKind::ConnectionAborted, e)),
+            Ok(value) => Ok(value),
+        }
+    }
+
+    // Performs the full shutdown procedure of a given SslStream. If the stream has already been
+    // shut down from this or the other side, returns successfully as well.
+    fn gracefully_shutdown<S: Read + Write>(stream: &mut SslStream<S>) -> Result<(), Error> {
+        match allow_zero_return(stream.shutdown())? {
+            ShutdownResult::Received => Ok(()),
+            ShutdownResult::Sent => match allow_zero_return(stream.shutdown())? {
+                ShutdownResult::Received => Ok(()),
+                ShutdownResult::Sent => Err(Error::new(ErrorKind::ConnectionAborted,
+                                                       "Unexpected ShutdownResult::Sent")),
+            }
+        }
+    }
 
     pub struct Server {
         handle: Option<JoinHandle<()>>,
@@ -55,6 +80,8 @@ mod tests {
                     println!("Accept call result: {:?}", r.as_ref().err());
                     let mut socket = r.unwrap();
                     socket.write_all(b"Test message").unwrap();
+                    println!("Server shutting down.");
+                    gracefully_shutdown(&mut socket).unwrap();
                     println!("Server finished.");
             }).unwrap();
 
@@ -88,5 +115,8 @@ mod tests {
         let mut res = vec![];
         stream.read_to_end(&mut res).unwrap();
         println!("Client received: {}", String::from_utf8_lossy(&res));
+        println!("Client shutting down.");
+        gracefully_shutdown(&mut stream).unwrap();
+        println!("Client finished");
     }
 }
