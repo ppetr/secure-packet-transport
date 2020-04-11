@@ -7,8 +7,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::thread::{self, JoinHandle};
 
-    use openssl::ssl::{Ssl, SslContext, SslContextBuilder, SslMethod};
-    use openssl::x509;
+    use openssl::ssl::{Ssl, SslContext, SslContextBuilder, SslFiletype, SslMethod};
     use test_util::tests::Channel;
 
     pub struct Server {
@@ -27,7 +26,7 @@ mod tests {
 	fn builder(channel: Channel) -> Builder {
 	    let mut ctx = SslContext::builder(SslMethod::dtls()).unwrap();
 	    ctx.set_certificate_chain_file("test/cert.pem").unwrap();
-	    ctx.set_private_key_file("test/key.pem", x509::X509_FILETYPE_PEM)
+	    ctx.set_private_key_file("test/key.pem", SslFiletype::PEM)
 		.unwrap();
 
 	    Builder {
@@ -68,22 +67,22 @@ mod tests {
     #[test]
     fn verify_fingerprint() {
 	use openssl::hash::MessageDigest;
-	use openssl::ssl::{SslMethod, SslConnectorBuilder, SSL_VERIFY_PEER};
+	use openssl::ssl::{SslMethod, SslConnector, SslVerifyMode};
 
         let (server_channel, client_channel) = Channel::create_pair(0);
 
         let _server = Server::builder(server_channel).build();
 
-	let mut connector = SslConnectorBuilder::new(SslMethod::dtls()).unwrap();
-        connector.set_verify_callback(SSL_VERIFY_PEER,
+	let mut connector = SslConnector::builder(SslMethod::dtls()).unwrap();
+        connector.set_verify_callback(SslVerifyMode::PEER,
                                       move |_preverified, context| {
-            let fingerprint = context.current_cert().unwrap().fingerprint(MessageDigest::sha256()).unwrap();
+            let fingerprint = context.current_cert().unwrap().digest(MessageDigest::sha256()).unwrap();
             println!("{:?}", fingerprint);
-            return fingerprint == [71, 18, 185, 57, 251, 203, 66, 166, 181, 16, 27, 66, 19, 154, 37, 177, 79, 129, 180, 24, 250, 202, 189, 55, 135, 70, 241, 47, 133, 204, 101, 68];
+            return fingerprint.as_ref() == [71, 18, 185, 57, 251, 203, 66, 166, 181, 16, 27, 66, 19, 154, 37, 177, 79, 129, 180, 24, 250, 202, 189, 55, 135, 70, 241, 47, 133, 204, 101, 68];
         });
         let connector = connector.build();
 
-	let stream = connector.danger_connect_without_providing_domain_for_certificate_verification_and_server_name_indication(client_channel);
+	let stream = connector.connect("UNSPECIFIED_DOMAIN", client_channel);
         println!("Connection result: {:?}", stream.as_ref().err());
         let mut stream = stream.unwrap();
 	let mut res = vec![];

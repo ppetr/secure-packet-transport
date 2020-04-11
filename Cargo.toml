@@ -4,6 +4,5 @@ version = "0.1.0"
 authors = ["Petr Pudlak <petr.mvd@gmail.com>"]
 
 [dependencies]
-# openssl = { version = "0.10", features = ["vendored"] }
+openssl = "0.10"
 openssl-sys = "0.9"
-openssl = "0.9"
