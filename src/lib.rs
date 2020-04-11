@@ -1,6 +1,45 @@
+#[macro_use] extern crate log;
 extern crate openssl;
 
 mod test_util;
+
+// Holds the list of fingerprints corresponding to a given chain of X509 certificates.
+#[derive(Clone, Debug)]
+pub struct FingerprintChain {
+    chain: Vec<openssl::hash::DigestBytes>,
+}
+
+impl FingerprintChain {
+    pub fn from_cert_chain(chain: &openssl::stack::StackRef<openssl::x509::X509>) -> Result<FingerprintChain, openssl::error::ErrorStack> {
+        let mut fingerprints = Vec::new();
+        for cert in chain.iter() {
+            fingerprints.push(cert.digest(openssl::hash::MessageDigest::sha256())?);
+        }
+        return Ok(FingerprintChain{ chain: fingerprints });
+    }
+}
+
+pub fn connect<S, F>(stream: S, verify: F) -> Result<openssl::ssl::SslStream<S>, openssl::ssl::HandshakeError<S>>
+where S: std::io::Read + std::io::Write,
+      F: Fn(&FingerprintChain) -> bool + 'static + Sync + Send,
+{
+    use openssl::ssl::{SslMethod, SslConnector, SslVerifyMode};
+    let mut connector = SslConnector::builder(SslMethod::dtls())?;
+    connector.set_verify_callback(SslVerifyMode::PEER,
+                                  move |_preverified, context| {
+        return match context.chain() {
+            None => return false,
+            Some(context_chain) => match ::FingerprintChain::from_cert_chain(context_chain) {
+                Err(err) => {
+                    debug!("Unable to compute fingerprints of a certificate chain: {:?}", err);
+                    return false;
+                },
+                Ok(chain) => verify(&chain),
+            },
+        };
+    });
+    return connector.build().connect("UNSPECIFIED_DOMAIN", stream);
+}
 
 #[cfg(test)]
 mod tests {
@@ -74,6 +113,7 @@ mod tests {
 
             let thread = thread::Builder::new().name(String::from("server"));
             let handle = thread.spawn(move || {
+                    // TODO: Use SslAcceptor here.
                     let ssl = Ssl::new(&ctx).unwrap();
                     println!("Server is waiting for a SSL connection");
                     let r = ssl.accept(channel);
@@ -93,25 +133,15 @@ mod tests {
 
     #[test]
     fn verify_fingerprint() {
-        use openssl::hash::MessageDigest;
-        use openssl::ssl::{SslMethod, SslConnector, SslVerifyMode};
-
         let (server_channel, client_channel) = Channel::create_pair(0);
 
         let _server = Server::builder(server_channel).build();
 
-        let mut connector = SslConnector::builder(SslMethod::dtls()).unwrap();
-        connector.set_verify_callback(SslVerifyMode::PEER,
-                                      move |_preverified, context| {
-            let fingerprint = context.current_cert().unwrap().digest(MessageDigest::sha256()).unwrap();
-            println!("{:?}", fingerprint);
-            return fingerprint.as_ref() == [71, 18, 185, 57, 251, 203, 66, 166, 181, 16, 27, 66, 19, 154, 37, 177, 79, 129, 180, 24, 250, 202, 189, 55, 135, 70, 241, 47, 133, 204, 101, 68];
-        });
-        let connector = connector.build();
-
-        let stream = connector.connect("UNSPECIFIED_DOMAIN", client_channel);
-        println!("Connection result: {:?}", stream.as_ref().err());
-        let mut stream = stream.unwrap();
+        let mut stream = ::connect(client_channel, move |chain| {
+            println!("Fingerprint chain: {:?}", chain);
+            assert_eq!(chain.chain.len(), 1);
+            return chain.chain[0].as_ref() == [71, 18, 185, 57, 251, 203, 66, 166, 181, 16, 27, 66, 19, 154, 37, 177, 79, 129, 180, 24, 250, 202, 189, 55, 135, 70, 241, 47, 133, 204, 101, 68];
+        }).unwrap();
         let mut res = vec![];
         stream.read_to_end(&mut res).unwrap();
         println!("Client received: {}", String::from_utf8_lossy(&res));
