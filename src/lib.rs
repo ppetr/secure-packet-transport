@@ -43,14 +43,23 @@ where F: Fn(&FingerprintChain) -> bool + 'static + Sync + Send,
 }
 
 pub struct SimpleConfiguration {
+    certificate_chain_file: Option<String>,
+    private_key_pem_file: Option<String>,
     allowed_keys: std::collections::HashSet<Vec<u8>>,
 }
 
 impl Configuration for SimpleConfiguration {
     fn configure(self, context: &mut openssl::ssl::SslContextBuilder) -> Result<(), openssl::error::ErrorStack> {
+        for file in self.certificate_chain_file {
+            context.set_certificate_chain_file(file)?;
+        }
+        for file in self.private_key_pem_file {
+            context.set_private_key_file(file, openssl::ssl::SslFiletype::PEM)?;
+        }
+        let allowed_keys = self.allowed_keys;
         set_verify_fingerprint_callback(context, move |chain| -> bool {
             match chain.chain.first() {
-                Some(digest) if self.allowed_keys.contains(digest.as_ref()) => true,
+                Some(digest) if allowed_keys.contains(digest.as_ref()) => true,
                 _ => false,
             }
         });
@@ -165,6 +174,8 @@ mod tests {
 
         println!("Client is connecting to the server");
         let mut config = ::SimpleConfiguration {
+            certificate_chain_file: None,
+            private_key_pem_file: None,
             allowed_keys: std::collections::HashSet::new(),
         };
         config.allowed_keys.insert([71, 18, 185, 57, 251, 203, 66, 166, 181, 16, 27, 66, 19, 154, 37, 177, 79, 129, 180, 24, 250, 202, 189, 55, 135, 70, 241, 47, 133, 204, 101, 68].to_vec());
