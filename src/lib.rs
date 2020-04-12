@@ -28,7 +28,8 @@ fn set_verify_fingerprint_callback<F>(context: &mut openssl::ssl::SslContextBuil
 where F: Fn(&FingerprintChain) -> bool + 'static + Sync + Send,
 {
     context.set_verify_callback(
-        openssl::ssl::SslVerifyMode::PEER, move |_preverified, ctx| {
+        openssl::ssl::SslVerifyMode::PEER | openssl::ssl::SslVerifyMode::FAIL_IF_NO_PEER_CERT,
+        move |_preverified, ctx| {
             match ctx.chain() {
                 None => false,
                 Some(context_chain) => match FingerprintChain::from_cert_chain(context_chain) {
@@ -45,7 +46,7 @@ where F: Fn(&FingerprintChain) -> bool + 'static + Sync + Send,
 pub struct SimpleConfiguration {
     certificate_chain_file: Option<String>,
     private_key_pem_file: Option<String>,
-    allowed_keys: std::collections::HashSet<Vec<u8>>,
+    allowed_keys: Option<std::collections::HashSet<Vec<u8>>>,
 }
 
 impl Configuration for SimpleConfiguration {
@@ -56,13 +57,14 @@ impl Configuration for SimpleConfiguration {
         for file in self.private_key_pem_file {
             context.set_private_key_file(file, openssl::ssl::SslFiletype::PEM)?;
         }
-        let allowed_keys = self.allowed_keys;
-        set_verify_fingerprint_callback(context, move |chain| -> bool {
-            match chain.chain.first() {
-                Some(digest) if allowed_keys.contains(digest.as_ref()) => true,
-                _ => false,
-            }
-        });
+        for allowed_keys in self.allowed_keys {
+            set_verify_fingerprint_callback(context, move |chain| -> bool {
+                match chain.chain.first() {
+                    Some(digest) if allowed_keys.contains(digest.as_ref()) => true,
+                    _ => false,
+                }
+            });
+        }
         Ok(())
     }
 }
@@ -138,7 +140,7 @@ mod tests {
                 config: ::SimpleConfiguration {
                     certificate_chain_file: Some("test/cert.pem".to_string()),
                     private_key_pem_file: Some("test/key.pem".to_string()),
-                    allowed_keys: std::collections::HashSet::new(),
+                    allowed_keys: None,
                 },
                 channel,
             }
@@ -181,12 +183,11 @@ mod tests {
         let _server = Server::builder(server_channel).build();
 
         println!("Client is connecting to the server");
-        let mut config = ::SimpleConfiguration {
+        let config = ::SimpleConfiguration {
             certificate_chain_file: None,
             private_key_pem_file: None,
-            allowed_keys: std::collections::HashSet::new(),
+            allowed_keys: Some([[71, 18, 185, 57, 251, 203, 66, 166, 181, 16, 27, 66, 19, 154, 37, 177, 79, 129, 180, 24, 250, 202, 189, 55, 135, 70, 241, 47, 133, 204, 101, 68].to_vec()].iter().cloned().collect()),
         };
-        config.allowed_keys.insert([71, 18, 185, 57, 251, 203, 66, 166, 181, 16, 27, 66, 19, 154, 37, 177, 79, 129, 180, 24, 250, 202, 189, 55, 135, 70, 241, 47, 133, 204, 101, 68].to_vec());
         let mut stream = ::connect(client_channel, config).unwrap();
         println!("Client is receiving data");
         let mut res = vec![];
