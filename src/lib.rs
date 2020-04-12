@@ -77,12 +77,22 @@ where S: std::io::Read + std::io::Write,
     return connector.build().connect("UNSPECIFIED_DOMAIN", stream);
 }
 
+pub fn server<C>(config: C) -> Result<openssl::ssl::SslAcceptor, openssl::error::ErrorStack>
+where C: Configuration
+ {
+    use openssl::ssl::{SslMethod, SslAcceptor};
+    // See https://wiki.mozilla.org/Security/Server_Side_TLS
+    let mut acceptor = SslAcceptor::mozilla_intermediate_v5(SslMethod::dtls())?;
+    config.configure(&mut acceptor)?;
+    Ok(acceptor.build())
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{Error, ErrorKind, Read, Write};
     use std::thread::{self, JoinHandle};
 
-    use openssl::ssl::{ShutdownResult, SslAcceptor, SslAcceptorBuilder, SslFiletype, SslMethod, SslStream};
+    use openssl::ssl::{ShutdownResult, SslStream};
     use test_util::tests::Channel;
 
     // Checks the SSL error, and if it is ZERO_RETURN (which means the connection has been closed
@@ -124,28 +134,26 @@ mod tests {
 
     impl Server {
         fn builder(channel: Channel) -> Builder {
-            // See https://wiki.mozilla.org/Security/Server_Side_TLS
-            let mut builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::dtls()).unwrap();
-            builder.set_certificate_chain_file("test/cert.pem").unwrap();
-            builder.set_private_key_file("test/key.pem", SslFiletype::PEM)
-                .unwrap();
-
             Builder {
-                builder,
+                config: ::SimpleConfiguration {
+                    certificate_chain_file: Some("test/cert.pem".to_string()),
+                    private_key_pem_file: Some("test/key.pem".to_string()),
+                    allowed_keys: std::collections::HashSet::new(),
+                },
                 channel,
             }
         }
     }
 
-    pub struct Builder {
-        builder: SslAcceptorBuilder,
+    struct Builder {
+        config: ::SimpleConfiguration,
         channel: Channel,
     }
 
     impl Builder {
 
         pub fn build(self) -> Server {
-            let acceptor = self.builder.build();
+            let acceptor = ::server(self.config).unwrap();
             let channel = self.channel;
 
             let thread = thread::Builder::new().name(String::from("server"));
