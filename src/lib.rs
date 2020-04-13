@@ -122,6 +122,12 @@ mod tests {
         }
     }
 
+    fn expect_to_read<R: std::io::Read>(reader: &mut R, data: &[u8]) {
+        let mut buffer = vec![0; data.len()];
+        reader.read_exact(&mut buffer).unwrap();
+        assert_eq!(buffer, data, "Didn't receive expected data");
+    }
+
     pub struct Server {
         handle: Option<JoinHandle<()>>,
     }
@@ -165,6 +171,8 @@ mod tests {
                     println!("Accept call result: {:?}", r.as_ref().err());
                     let mut socket = r.unwrap();
                     socket.write_all(b"Test message").unwrap();
+                    expect_to_read(&mut socket, b"Test reply\x00\xaa\x55\xff");
+                    socket.write_all(b"Another test message").unwrap();
                     println!("Server shutting down.");
                     gracefully_shutdown(&mut socket).unwrap();
                     println!("Server finished.");
@@ -190,9 +198,9 @@ mod tests {
         };
         let mut stream = ::connect(client_channel, config).unwrap();
         println!("Client is receiving data");
-        let mut res = vec![];
-        stream.read_to_end(&mut res).unwrap();
-        println!("Client received: {}", String::from_utf8_lossy(&res));
+        expect_to_read(&mut stream, b"Test message");
+        stream.write_all(b"Test reply\x00\xaa\x55\xff").unwrap();
+        expect_to_read(&mut stream, b"Another test message");
         println!("Client is shutting down.");
         gracefully_shutdown(&mut stream).unwrap();
         println!("Client finished");
