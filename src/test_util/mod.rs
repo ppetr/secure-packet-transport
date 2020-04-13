@@ -49,4 +49,35 @@ pub mod tests {
             Ok(len)
         }
     }
+
+    // Messages are used to test sending and receiving blocks of data.
+    pub struct Message<'a> {
+        pub server_sends: bool,
+        pub data: &'a[u8],
+    }
+
+    impl Message<'_> {
+        pub fn expect_to_read<R: std::io::Read>(reader: &mut R, data: &[u8]) {
+            let mut buffer = vec![0; data.len()];
+            reader.read_exact(&mut buffer).unwrap();
+            assert_eq!(buffer, data, "Didn't receive expected data");
+        }
+
+        pub fn expect_eof<R: std::io::Read>(reader: &mut R) {
+            let mut buffer = vec![0; 1];
+            assert_eq!(reader.read(&mut buffer).unwrap(), 0, "Not EOF yet");
+        }
+
+        // Sends or receives message, depending on its 'server_sends' field and 'server' parameter.
+        // Panics if the operation fails.
+        pub fn send_or_receive<S>(&self, server: bool, stream: &mut S)
+        where S: std::io::Read + std::io::Write
+        {
+            if server == self.server_sends {
+                stream.write_all(self.data).unwrap();
+            } else {
+                Message::expect_to_read(stream, self.data);
+            }
+        }
+    }
 }

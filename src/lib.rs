@@ -95,7 +95,7 @@ mod tests {
     use std::thread::{self, JoinHandle};
 
     use openssl::ssl::{ShutdownResult, SslStream};
-    use test_util::tests::Channel;
+    use test_util::tests::{Channel, Message};
 
     // Checks the SSL error, and if it is ZERO_RETURN (which means the connection has been closed
     // already), returns ShutdownResult::Received.
@@ -122,10 +122,18 @@ mod tests {
         }
     }
 
-    fn expect_to_read<R: std::io::Read>(reader: &mut R, data: &[u8]) {
-        let mut buffer = vec![0; data.len()];
-        reader.read_exact(&mut buffer).unwrap();
-        assert_eq!(buffer, data, "Didn't receive expected data");
+    // Sends or receives a sequence of messages and then waits for EOF on the server or the
+    // client side (exactly at one of them).
+    fn expect_messages<S>(server: bool, stream: &mut S, seq: &[Message])
+    where S: std::io::Read + std::io::Write
+    {
+        for message in seq {
+            message.send_or_receive(server, stream);
+        }
+        // Choose pseudorandomly one side that waits for the other one to close the connection.
+        if (seq.len() % 2 == 0) == server {
+            Message::expect_eof(stream);
+        }
     }
 
     pub struct Server {
@@ -170,9 +178,7 @@ mod tests {
                     let r = acceptor.accept(channel);
                     println!("Accept call result: {:?}", r.as_ref().err());
                     let mut socket = r.unwrap();
-                    socket.write_all(b"Test message").unwrap();
-                    expect_to_read(&mut socket, b"Test reply\x00\xaa\x55\xff");
-                    socket.write_all(b"Another test message").unwrap();
+                    expect_messages(/*server=*/true, &mut socket, &TEST_MESSAGE_SEQUENCE);
                     println!("Server shutting down.");
                     gracefully_shutdown(&mut socket).unwrap();
                     println!("Server finished.");
@@ -184,6 +190,14 @@ mod tests {
         }
     }
 
+    const TEST_MESSAGE_SEQUENCE: &[Message] = &[
+        Message { server_sends: true, data: b"Test message" },
+        Message { server_sends: false, data: b"Test reply\x00\xaa\x55\xff" },
+        Message { server_sends: false, data: b"\x00\xaa\x55\xff" },
+        Message { server_sends: true, data: b"Another test message" },
+        Message { server_sends: true, data: b"Final test message" },
+    ];
+
     #[test]
     fn verify_fingerprint() {
         let (server_channel, client_channel) = Channel::create_pair(1);
@@ -194,15 +208,13 @@ mod tests {
         let config = ::SimpleConfiguration {
             certificate_chain_file: None,
             private_key_pem_file: None,
-            allowed_keys: Some([[71, 18, 185, 57, 251, 203, 66, 166, 181, 16, 27, 66, 19, 154, 37, 177, 79, 129, 180, 24, 250, 202, 189, 55, 135, 70, 241, 47, 133, 204, 101, 68].to_vec()].iter().cloned().collect()),
+            allowed_keys: Some([vec![71, 18, 185, 57, 251, 203, 66, 166, 181, 16, 27, 66, 19, 154, 37, 177, 79, 129, 180, 24, 250, 202, 189, 55, 135, 70, 241, 47, 133, 204, 101, 68]].iter().cloned().collect()),
         };
-        let mut stream = ::connect(client_channel, config).unwrap();
+        let mut socket = ::connect(client_channel, config).unwrap();
         println!("Client is receiving data");
-        expect_to_read(&mut stream, b"Test message");
-        stream.write_all(b"Test reply\x00\xaa\x55\xff").unwrap();
-        expect_to_read(&mut stream, b"Another test message");
+        expect_messages(/*server=*/false, &mut socket, &TEST_MESSAGE_SEQUENCE);
         println!("Client is shutting down.");
-        gracefully_shutdown(&mut stream).unwrap();
+        gracefully_shutdown(&mut socket).unwrap();
         println!("Client finished");
     }
 }
