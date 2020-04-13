@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn verify_fingerprint() {
-        let (server_channel, client_channel) = Channel::create_pair(0);
+        let (server_channel, client_channel) = Channel::create_pair(1);
 
         let _server = Server::builder(server_channel).build();
 
