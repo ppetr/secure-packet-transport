@@ -178,7 +178,7 @@ mod tests {
                     let r = acceptor.accept(channel);
                     println!("Accept call result: {:?}", r.as_ref().err());
                     let mut socket = r.unwrap();
-                    expect_messages(/*server=*/true, &mut socket, &TEST_MESSAGE_SEQUENCE);
+                    expect_messages(/*server=*/true, &mut socket, TEST_MESSAGE_SEQUENCE);
                     println!("Server shutting down.");
                     gracefully_shutdown(&mut socket).unwrap();
                     println!("Server finished.");
@@ -212,7 +212,7 @@ mod tests {
         };
         let mut socket = ::connect(client_channel, config).unwrap();
         println!("Client is receiving data");
-        expect_messages(/*server=*/false, &mut socket, &TEST_MESSAGE_SEQUENCE);
+        expect_messages(/*server=*/false, &mut socket, TEST_MESSAGE_SEQUENCE);
         println!("Client is shutting down.");
         gracefully_shutdown(&mut socket).unwrap();
         println!("Client finished");
