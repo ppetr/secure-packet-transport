@@ -2,6 +2,8 @@
 
 *Disclaimer:* This is not an officially supported Google product.
 
+[![Build Status](https://travis-ci.com/ppetr/secure-packet-transport.svg?branch=master)](https://travis-ci.com/ppetr/secure-packet-transport)
+
 ## Objective
 
 Create a simple interface that allows private and authenticated transport of
