@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#[macro_use] extern crate log;
+#[macro_use]
+extern crate log;
 extern crate openssl;
 
 mod test_util;
@@ -24,37 +25,47 @@ pub struct FingerprintChain {
 }
 
 impl FingerprintChain {
-    pub fn from_cert_chain(chain: &openssl::stack::StackRef<openssl::x509::X509>) -> Result<FingerprintChain, openssl::error::ErrorStack> {
+    pub fn from_cert_chain(
+        chain: &openssl::stack::StackRef<openssl::x509::X509>,
+    ) -> Result<FingerprintChain, openssl::error::ErrorStack> {
         let mut fingerprints = Vec::new();
         for cert in chain.iter() {
             fingerprints.push(cert.digest(openssl::hash::MessageDigest::sha256())?);
         }
-        return Ok(FingerprintChain{ chain: fingerprints });
+        return Ok(FingerprintChain {
+            chain: fingerprints,
+        });
     }
 }
 
 pub trait Configuration {
-    fn configure(self, &mut openssl::ssl::SslContextBuilder) -> Result<(), openssl::error::ErrorStack>;
+    fn configure(
+        self,
+        context: &mut openssl::ssl::SslContextBuilder,
+    ) -> Result<(), openssl::error::ErrorStack>;
 }
 
 // TODO: Investigate the option of returning a Result from 'F' and passing errors to ErrorStack.
 fn set_verify_fingerprint_callback<F>(context: &mut openssl::ssl::SslContextBuilder, callback: F)
-where F: Fn(&FingerprintChain) -> bool + 'static + Sync + Send,
+where
+    F: Fn(&FingerprintChain) -> bool + 'static + Sync + Send,
 {
     context.set_verify_callback(
         openssl::ssl::SslVerifyMode::PEER | openssl::ssl::SslVerifyMode::FAIL_IF_NO_PEER_CERT,
-        move |_preverified, ctx| {
-            match ctx.chain() {
-                None => false,
-                Some(context_chain) => match FingerprintChain::from_cert_chain(context_chain) {
-                    Err(err) => {
-                        debug!("Unable to compute fingerprints of a certificate chain: {:?}", err);
-                        false
-                    },
-                    Ok(chain) => callback(&chain),
-                },
-            }
-        })
+        move |_preverified, ctx| match ctx.chain() {
+            None => false,
+            Some(context_chain) => match FingerprintChain::from_cert_chain(context_chain) {
+                Err(err) => {
+                    debug!(
+                        "Unable to compute fingerprints of a certificate chain: {:?}",
+                        err
+                    );
+                    false
+                }
+                Ok(chain) => callback(&chain),
+            },
+        },
+    )
 }
 
 pub struct SimpleConfiguration {
@@ -64,7 +75,10 @@ pub struct SimpleConfiguration {
 }
 
 impl Configuration for SimpleConfiguration {
-    fn configure(self, context: &mut openssl::ssl::SslContextBuilder) -> Result<(), openssl::error::ErrorStack> {
+    fn configure(
+        self,
+        context: &mut openssl::ssl::SslContextBuilder,
+    ) -> Result<(), openssl::error::ErrorStack> {
         for file in self.certificate_chain_file {
             context.set_certificate_chain_file(file)?;
         }
@@ -83,20 +97,25 @@ impl Configuration for SimpleConfiguration {
     }
 }
 
-pub fn connect<S, C>(stream: S, config: C) -> Result<openssl::ssl::SslStream<S>, openssl::ssl::HandshakeError<S>>
-where S: std::io::Read + std::io::Write,
-      C: Configuration
- {
-    use openssl::ssl::{SslMethod, SslConnector};
+pub fn connect<S, C>(
+    stream: S,
+    config: C,
+) -> Result<openssl::ssl::SslStream<S>, openssl::ssl::HandshakeError<S>>
+where
+    S: std::io::Read + std::io::Write,
+    C: Configuration,
+{
+    use openssl::ssl::{SslConnector, SslMethod};
     let mut connector = SslConnector::builder(SslMethod::dtls())?;
     config.configure(&mut connector)?;
     return connector.build().connect("UNSPECIFIED_DOMAIN", stream);
 }
 
 pub fn server<C>(config: C) -> Result<openssl::ssl::SslAcceptor, openssl::error::ErrorStack>
-where C: Configuration
- {
-    use openssl::ssl::{SslMethod, SslAcceptor};
+where
+    C: Configuration,
+{
+    use openssl::ssl::{SslAcceptor, SslMethod};
     // See https://wiki.mozilla.org/Security/Server_Side_TLS
     let mut acceptor = SslAcceptor::mozilla_intermediate_v5(SslMethod::dtls())?;
     config.configure(&mut acceptor)?;
@@ -114,10 +133,13 @@ mod tests {
     // Checks the SSL error, and if it is ZERO_RETURN (which means the connection has been closed
     // already), returns ShutdownResult::Received.
     // Wraps any SSL error into an io::Error.
-    fn allow_zero_return(result: Result<ShutdownResult, openssl::ssl::Error>) -> Result<ShutdownResult, Error> {
+    fn allow_zero_return(
+        result: Result<ShutdownResult, openssl::ssl::Error>,
+    ) -> Result<ShutdownResult, Error> {
         match result {
-            Err(e) if e.code() == openssl::ssl::ErrorCode::ZERO_RETURN =>
-                Ok(ShutdownResult::Received),
+            Err(e) if e.code() == openssl::ssl::ErrorCode::ZERO_RETURN => {
+                Ok(ShutdownResult::Received)
+            }
             Err(e) => Err(Error::new(ErrorKind::ConnectionAborted, e)),
             Ok(value) => Ok(value),
         }
@@ -130,16 +152,19 @@ mod tests {
             ShutdownResult::Received => Ok(()),
             ShutdownResult::Sent => match allow_zero_return(stream.shutdown())? {
                 ShutdownResult::Received => Ok(()),
-                ShutdownResult::Sent => Err(Error::new(ErrorKind::ConnectionAborted,
-                                                       "Unexpected ShutdownResult::Sent")),
-            }
+                ShutdownResult::Sent => Err(Error::new(
+                    ErrorKind::ConnectionAborted,
+                    "Unexpected ShutdownResult::Sent",
+                )),
+            },
         }
     }
 
     // Sends or receives a sequence of messages and then waits for EOF on the server or the
     // client side (exactly at one of them).
     fn expect_messages<S>(server: bool, stream: &mut S, seq: &[Message])
-    where S: std::io::Read + std::io::Write
+    where
+        S: std::io::Read + std::io::Write,
     {
         for message in seq {
             message.send_or_receive(server, stream);
@@ -181,22 +206,23 @@ mod tests {
     }
 
     impl Builder {
-
         pub fn build(self) -> Server {
             let acceptor = ::server(self.config).unwrap();
             let channel = self.channel;
 
             let thread = thread::Builder::new().name(String::from("server"));
-            let handle = thread.spawn(move || {
+            let handle = thread
+                .spawn(move || {
                     println!("Server is waiting for a SSL connection");
                     let r = acceptor.accept(channel);
                     println!("Accept call result: {:?}", r.as_ref().err());
                     let mut socket = r.unwrap();
-                    expect_messages(/*server=*/true, &mut socket, TEST_MESSAGE_SEQUENCE);
+                    expect_messages(/*server=*/ true, &mut socket, TEST_MESSAGE_SEQUENCE);
                     println!("Server shutting down.");
                     gracefully_shutdown(&mut socket).unwrap();
                     println!("Server finished.");
-            }).unwrap();
+                })
+                .unwrap();
 
             Server {
                 handle: Some(handle),
@@ -205,11 +231,26 @@ mod tests {
     }
 
     const TEST_MESSAGE_SEQUENCE: &[Message] = &[
-        Message { server_sends: true, data: b"Test message" },
-        Message { server_sends: false, data: b"Test reply\x00\xaa\x55\xff" },
-        Message { server_sends: false, data: b"\x00\xaa\x55\xff" },
-        Message { server_sends: true, data: b"Another test message" },
-        Message { server_sends: true, data: b"Final test message" },
+        Message {
+            server_sends: true,
+            data: b"Test message",
+        },
+        Message {
+            server_sends: false,
+            data: b"Test reply\x00\xaa\x55\xff",
+        },
+        Message {
+            server_sends: false,
+            data: b"\x00\xaa\x55\xff",
+        },
+        Message {
+            server_sends: true,
+            data: b"Another test message",
+        },
+        Message {
+            server_sends: true,
+            data: b"Final test message",
+        },
     ];
 
     #[test]
@@ -222,11 +263,19 @@ mod tests {
         let config = ::SimpleConfiguration {
             certificate_chain_file: None,
             private_key_pem_file: None,
-            allowed_keys: Some([vec![71, 18, 185, 57, 251, 203, 66, 166, 181, 16, 27, 66, 19, 154, 37, 177, 79, 129, 180, 24, 250, 202, 189, 55, 135, 70, 241, 47, 133, 204, 101, 68]].iter().cloned().collect()),
+            allowed_keys: Some(
+                [vec![
+                    71, 18, 185, 57, 251, 203, 66, 166, 181, 16, 27, 66, 19, 154, 37, 177, 79, 129,
+                    180, 24, 250, 202, 189, 55, 135, 70, 241, 47, 133, 204, 101, 68,
+                ]]
+                .iter()
+                .cloned()
+                .collect(),
+            ),
         };
         let mut socket = ::connect(client_channel, config).unwrap();
         println!("Client is receiving data");
-        expect_messages(/*server=*/false, &mut socket, TEST_MESSAGE_SEQUENCE);
+        expect_messages(/*server=*/ false, &mut socket, TEST_MESSAGE_SEQUENCE);
         println!("Client is shutting down.");
         gracefully_shutdown(&mut socket).unwrap();
         println!("Client finished");

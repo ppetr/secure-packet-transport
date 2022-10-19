@@ -15,9 +15,9 @@
 #[cfg(test)]
 pub mod tests {
     use std::fmt::Display;
-    use std::io as io;
+    use std::io;
     use std::io::{Read, Write};
-    use std::sync::mpsc::{Receiver, RecvError, SyncSender, sync_channel};
+    use std::sync::mpsc::{sync_channel, Receiver, RecvError, SyncSender};
 
     #[derive(Debug)]
     pub struct Channel {
@@ -29,11 +29,22 @@ pub mod tests {
         pub fn create_pair(bound: usize) -> (Channel, Channel) {
             let (sender1, receiver1) = sync_channel(bound);
             let (sender2, receiver2) = sync_channel(bound);
-            (Channel { writer: sender1, reader: receiver2 },
-             Channel { writer: sender2, reader: receiver1 })
+            (
+                Channel {
+                    writer: sender1,
+                    reader: receiver2,
+                },
+                Channel {
+                    writer: sender2,
+                    reader: receiver1,
+                },
+            )
         }
 
-        fn to_io_result<E>(err: E) -> io::Error where E: Display {
+        fn to_io_result<E>(err: E) -> io::Error
+        where
+            E: Display,
+        {
             use std::io::{Error, ErrorKind};
             Error::new(ErrorKind::BrokenPipe, err.to_string())
         }
@@ -41,7 +52,9 @@ pub mod tests {
 
     impl Write for Channel {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.writer.send(buf.to_vec()).map_err(Channel::to_io_result)?;
+            self.writer
+                .send(buf.to_vec())
+                .map_err(Channel::to_io_result)?;
             Ok(buf.len())
         }
 
@@ -54,7 +67,7 @@ pub mod tests {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             use std::cmp::min;
             let vec = match self.reader.recv() {
-                Err(RecvError { }) => return Ok(0),
+                Err(RecvError {}) => return Ok(0),
                 Ok(payload) => payload,
             };
             // Silently truncate the value, if the buffer is too small.
@@ -67,7 +80,7 @@ pub mod tests {
     // Messages are used to test sending and receiving blocks of data.
     pub struct Message<'a> {
         pub server_sends: bool,
-        pub data: &'a[u8],
+        pub data: &'a [u8],
     }
 
     impl Message<'_> {
@@ -85,7 +98,8 @@ pub mod tests {
         // Sends or receives message, depending on its 'server_sends' field and 'server' parameter.
         // Panics if the operation fails.
         pub fn send_or_receive<S>(&self, server: bool, stream: &mut S)
-        where S: std::io::Read + std::io::Write
+        where
+            S: std::io::Read + std::io::Write,
         {
             if server == self.server_sends {
                 stream.write_all(self.data).unwrap();
